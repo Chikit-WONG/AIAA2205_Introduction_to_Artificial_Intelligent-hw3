@@ -14,6 +14,10 @@ import torchvision.transforms as transforms
 
 torch.backends.cudnn.benchmark = True
 
+# 检查 GPU 是否可用
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
 transforms = transforms.Compose(
     [
         transforms.Resize((224, 224)),
@@ -37,7 +41,7 @@ train_dataset = MyDataset(
     transform=transforms,
 )
 
-print("dataset loaded")
+print("Dataset loaded")
 train_loader = DataLoader(
     train_dataset,
     batch_size=32,
@@ -50,21 +54,20 @@ val_loader = DataLoader(
     val_dataset, batch_size=32, shuffle=False, num_workers=2, pin_memory=True
 )
 
-print("train ", len(train_loader))
-print("val ", len(val_loader))
+print("Train loader:", len(train_loader))
+print("Val loader:", len(val_loader))
 
-model = VideoResNet(num_classes=10).cuda()
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+model = VideoResNet(num_classes=10).to(device)
+optimizer = torch.optim.SGD(model.parameters(), lr=1e-2, momentum=0.9)
 criterion = nn.CrossEntropyLoss()
 
-print("model loaded")
+print("Model loaded")
 
 best_acc_train = 0
 best_acc_val = 0
-counter = 0  # Initialize counter to track epochs since last improvement
 
-print("start training")
-for epoch in range(50):
+print("Start training")
+for epoch in range(1):
     start_time = time.time()
     running_loss_train = 0.0
     running_loss_val = 0.0
@@ -73,10 +76,10 @@ for epoch in range(50):
     correct_val = 0
     total_val = 0
 
-    model.train()  # Set the model to train mode
-    print("train ...")
+    model.train()
+    print("Train ...")
     for i, (inputs, labels) in enumerate(train_loader, 0):
-        inputs, labels = inputs.cuda(), labels.cuda()
+        inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
         outputs = model(inputs)
         loss_train = criterion(outputs, labels)
@@ -87,12 +90,11 @@ for epoch in range(50):
         total_train += labels.size(0)
         correct_train += (predicted_train == labels).sum().item()
 
-    model.eval()  # Set the model to evaluation mode
-
+    model.eval()
     with torch.no_grad():
-        print("val ...")
+        print("Validate ...")
         for val_inputs, val_labels in val_loader:
-            val_inputs, val_labels = val_inputs.cuda(), val_labels.cuda()
+            val_inputs, val_labels = val_inputs.to(device), val_labels.to(device)
             val_outputs = model(val_inputs)
             loss_val = criterion(val_outputs, val_labels)
             running_loss_val += loss_val.item()
@@ -103,8 +105,9 @@ for epoch in range(50):
     acc_train = correct_train / total_train
     acc_val = correct_val / total_val
 
-    print(f"acc train   {acc_train}       {correct_train}/{total_train}")
-    print(f"acc val     {acc_val}         {correct_val}/{total_val}")
+    print(f"Epoch {epoch + 1}")
+    print(f"Acc train   {acc_train}       {correct_train}/{total_train}")
+    print(f"Acc val     {acc_val}         {correct_val}/{total_val}")
 
     if acc_train > best_acc_train:
         best_acc_train = acc_train
