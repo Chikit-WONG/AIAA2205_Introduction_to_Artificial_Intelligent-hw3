@@ -1,120 +1,51 @@
-import os
-import pandas as pd
-import time
-from PIL import Image
-from sklearn.model_selection import train_test_split
-from dataset import MyDataset
-from models import VideoResNet
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
-import torchvision.transforms as transforms
+from models import VideoResNet
+from dataset import VideoDataset
+from torch.utils.data import DataLoader
 
-torch.backends.cudnn.benchmark = True
-
-# 检查 GPU 是否可用
+# 使用 CUDA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-transforms = transforms.Compose(
-    [
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    ]
+# 加载数据
+train_dataset = VideoDataset(
+    root="./data/hw3_16fpv", csv_file="./data/trainval.csv", stage="train", ratio=0.2
+)
+val_dataset = VideoDataset(
+    root="./data/hw3_16fpv", csv_file="./data/trainval.csv", stage="val", ratio=0.2
 )
 
-val_dataset = MyDataset(
-    "./data/hw3_16fpv",
-    "./data/trainval.csv",
-    stage="val",
-    ratio=0.2,
-    transform=transforms,
-)
-train_dataset = MyDataset(
-    "./data/hw3_16fpv",
-    "./data/trainval.csv",
-    stage="train",
-    ratio=0.2,
-    transform=transforms,
-)
+train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True, num_workers=2)
+val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False, num_workers=2)
 
-print("Dataset loaded")
-train_loader = DataLoader(
-    train_dataset,
-    batch_size=32,
-    shuffle=True,
-    num_workers=2,
-    pin_memory=True,
-    drop_last=True,
-)
-val_loader = DataLoader(
-    val_dataset, batch_size=32, shuffle=False, num_workers=2, pin_memory=True
-)
+# 初始化模型
+model = VideoResNet(num_classes=10)
+model.to(device)
 
-print("Train loader:", len(train_loader))
-print("Val loader:", len(val_loader))
-
-model = VideoResNet(num_classes=10).to(device)
-optimizer = torch.optim.SGD(model.parameters(), lr=1e-2, momentum=0.9)
+# 定义优化器与损失
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 criterion = nn.CrossEntropyLoss()
 
-print("Model loaded")
-
-best_acc_train = 0
-best_acc_val = 0
-
-print("Start training")
+# 训练循环
 for epoch in range(1):
-    start_time = time.time()
-    running_loss_train = 0.0
-    running_loss_val = 0.0
-    correct_train = 0
-    total_train = 0
-    correct_val = 0
-    total_val = 0
-
     model.train()
-    print("Train ...")
-    for i, (inputs, labels) in enumerate(train_loader, 0):
-        inputs, labels = inputs.to(device), labels.to(device)
+    for inputs, labels in train_loader:
+        slow_path, fast_path = inputs
+        slow_path, fast_path, labels = (
+            slow_path.to(device),
+            fast_path.to(device),
+            labels.to(device),
+        )
+        print(f"Slow path shape: {slow_path.shape}, Fast path shape: {fast_path.shape}")
+
+        # 前向传播
+        outputs = model([slow_path, fast_path])
+        loss = criterion(outputs, labels)
+
+        # 反向传播
         optimizer.zero_grad()
-        outputs = model(inputs)
-        loss_train = criterion(outputs, labels)
-        loss_train.backward()
+        loss.backward()
         optimizer.step()
-        running_loss_train += loss_train.item()
-        _, predicted_train = torch.max(outputs.data, 1)
-        total_train += labels.size(0)
-        correct_train += (predicted_train == labels).sum().item()
 
-    model.eval()
-    with torch.no_grad():
-        print("Validate ...")
-        for val_inputs, val_labels in val_loader:
-            val_inputs, val_labels = val_inputs.to(device), val_labels.to(device)
-            val_outputs = model(val_inputs)
-            loss_val = criterion(val_outputs, val_labels)
-            running_loss_val += loss_val.item()
-            _, predicted_val = torch.max(val_outputs.data, 1)
-            total_val += val_labels.size(0)
-            correct_val += (predicted_val == val_labels).sum().item()
-
-    acc_train = correct_train / total_train
-    acc_val = correct_val / total_val
-
-    print(f"Epoch {epoch + 1}")
-    print(f"Acc train   {acc_train}       {correct_train}/{total_train}")
-    print(f"Acc val     {acc_val}         {correct_val}/{total_val}")
-
-    if acc_train > best_acc_train:
-        best_acc_train = acc_train
-        torch.save(model.state_dict(), "./models/ResNet18_best_train.pth")
-
-    if acc_val > best_acc_val:
-        best_acc_val = acc_val
-        torch.save(model.state_dict(), "./models/ResNet18_best_val.pth")
-
-    torch.save(model.state_dict(), "./models/ResNet18_last.pth")
+    print(f"Epoch {epoch + 1}: Loss = {loss.item()}")
