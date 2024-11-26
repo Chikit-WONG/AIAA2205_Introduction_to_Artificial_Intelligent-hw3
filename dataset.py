@@ -1,24 +1,20 @@
 import os
 import pandas as pd
-import torch
-import torchvision.transforms as transforms
 from PIL import Image
+import torch
 from torch.utils.data import Dataset
 
 
-class VideoDataset(Dataset):
+class MyDataset(Dataset):
     def __init__(self, root, csv_file, stage="train", ratio=0.2, transform=None):
         self.root = root
-        self.csv_file = csv_file
+        self.transforms = transform
         self.df = pd.read_csv(csv_file, header=None, skiprows=1)
         self.stage = stage
         self.ratio = ratio
-        self.transforms = transform or transforms.Compose(
-            [transforms.Resize((224, 224)), transforms.ToTensor()]
-        )
-        self.files = self._split_files()
+        self.files = self._get_files()
 
-    def _split_files(self):
+    def _get_files(self):
         filenames = self.df[0].tolist()
         length = len(filenames)
         train_files = filenames[int(length * self.ratio) :]
@@ -27,28 +23,33 @@ class VideoDataset(Dataset):
             return train_files
         elif self.stage == "val":
             return val_files
+        elif self.stage == "test":
+            return filenames
         else:
-            raise ValueError("Invalid stage: 'train' or 'val' expected.")
+            raise ValueError("Invalid stage: choose 'train', 'val', or 'test'.")
 
     def __len__(self):
         return len(self.files)
 
-    def __getitem__(self, idx):
-        vid = self.files[idx]
+    def __getitem__(self, index):
+        vid = self.files[index]
         video_path = os.path.join(self.root, "hw3_16fpv", f"{vid}.mp4")
         img_list = sorted(os.listdir(video_path))
-        imgs = [
-            self.transforms(Image.open(os.path.join(video_path, img)).convert("RGB"))
-            for img in img_list
-        ]
 
+        # 读取所有帧
+        imgs = [
+            self.transforms(
+                Image.open(os.path.join(video_path, img_path)).convert("RGB")
+            )
+            for img_path in img_list
+        ]
         video_tensor = torch.stack(imgs)  # [T, C, H, W]
 
-        # Slow Path 取 1/4 帧
-        slow_tensor = video_tensor[::8]
-        # Fast Path 全部帧
-        fast_tensor = video_tensor
+        # 如果帧数不足 32，重复补足
+        if video_tensor.shape[0] < 32:
+            repeat_times = (32 // video_tensor.shape[0]) + 1
+            video_tensor = video_tensor.repeat(repeat_times, 1, 1, 1)[:32]
 
-        # 标签
-        label = self.df.loc[self.df[0] == vid, 1].values[0]
-        return (slow_tensor, fast_tensor), label
+        # 调整维度为 [C, T, H, W]
+        video_tensor = video_tensor.permute(1, 0, 2, 3)
+        return video_tensor, self.df.loc[self.df[0] == vid, 1].values[0]
