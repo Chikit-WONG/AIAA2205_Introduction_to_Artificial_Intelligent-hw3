@@ -33,7 +33,9 @@ model.load_state_dict(torch.load("./models/best_model.pth"))
 # 推理
 model.eval()
 results = []
-video_ids = pd.read_csv("./data/test_for_student.csv")[0].tolist()
+
+# 从 `test_for_student.csv` 中读取视频 ID
+video_ids = pd.read_csv("./data/test_for_student.csv")["Id"].tolist()
 
 with torch.no_grad():
     for inputs, _ in test_loader:
@@ -44,5 +46,5 @@ with torch.no_grad():
 
 # 保存结果
 result_df = pd.DataFrame({"Id": video_ids, "Category": results})
-result_df.to_csv("./results/submission.csv", index=False)
-print("Results saved to ./results/submission.csv")
+result_df.to_csv("./results/result_x3d_s.csv", index=False)
+print("Results saved to ./results/result_x3d_s.csv")
